@@ -26,6 +26,13 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#ifdef __MACH__
+#include <mach/clock.h>
+#include <mach/mach.h>
+#else
+#include <sys/time.h>
+#endif
+
 #ifdef DEBUG
 #include <stdio.h>
 #define TRACE(x...) printf(x)
@@ -130,18 +137,30 @@ static long queue_release(struct queue_t* q)
     return refs;
 }
 
-static int timeout_to_timespec(int timeout, struct timespec* ts)
+static int timeout_to_timespec(double timeout, struct timespec* ts)
 {
     if (timeout < 0)
         return 0;
+    
+#ifdef __MACH__ // OS X does not have clock_gettime, use clock_get_time
+    clock_serv_t cclock;
+    mach_timespec_t mts;
+    host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+    clock_get_time(cclock, &mts);
+    mach_port_deallocate(mach_task_self(), cclock);
+    ts->tv_sec = mts.tv_sec;
+    ts->tv_nsec = mts.tv_nsec;
+#else
     clock_gettime(CLOCK_REALTIME, ts);
-    ts->tv_nsec += timeout * 1000000L;
+#endif
+
+    ts->tv_nsec += timeout * 1000000000L;
     ts->tv_sec += ts->tv_nsec / 1000000000L;
     ts->tv_nsec = ts->tv_nsec % 1000000000L;
     return 1;
 }
 
-static int queue_send(struct queue_t* q, struct msg_t* msg, int timeout)
+static int queue_send(struct queue_t* q, struct msg_t* msg, double timeout)
 {
     struct timespec ts;
 
@@ -180,7 +199,7 @@ static int queue_send(struct queue_t* q, struct msg_t* msg, int timeout)
     return msg ? 1 : 0;
 }
 
-static struct msg_t* queue_recv(struct queue_t* q, int timeout)
+static struct msg_t* queue_recv(struct queue_t* q, double timeout)
 {
     struct msg_t* msg = NULL;
     struct timespec ts;
@@ -341,6 +360,21 @@ static int _lua_arg_integer(lua_State* L, int index, int optional, int def_val, 
     return 0;
 }
 
+static double _lua_arg_double(lua_State* L, int index, int optional, double def_val, const char* usage)
+{
+    if (lua_gettop(L) >= index)
+    {
+        if (lua_isnumber(L, index))
+            return (int)lua_tonumber(L, index);
+    }
+    else if (optional)
+    {
+        return def_val;
+    }
+    _lua_usage(L, usage);
+    return 0;
+}
+
 static struct queue_t* _lua_arg_queue(lua_State* L)
 {
     struct queue_t* q = (struct queue_t*)lua_topointer(L, 1);
@@ -356,7 +390,8 @@ static const char* _usage_send = "chan:send(string|number|boolean, timeout = -1)
 
 static int chan_send(lua_State* L)
 {
-    int type, timeout, ret;
+    int type, ret;
+    double timeout;
     struct msg_t* msg;
     struct queue_t* q = _lua_arg_queue(L);
     if (lua_gettop(L) < 2)
@@ -368,7 +403,7 @@ static int chan_send(lua_State* L)
     else
         _lua_usage(L, _usage_send);
 
-    timeout = _lua_arg_integer(L, 3, 1, -1, _usage_send);
+    timeout = _lua_arg_double(L, 3, 1, -1, _usage_send);
 
     switch (type)
     {
@@ -411,7 +446,7 @@ static const char* _usage_recv = "chan:recv(timeout = -1)";
 static int chan_recv(lua_State* L)
 {
     struct queue_t* q = _lua_arg_queue(L);
-    int timeout = _lua_arg_integer(L, 2, 1, -1, _usage_recv);
+    double timeout = _lua_arg_double(L, 2, 1, -1, _usage_recv);
     struct msg_t* msg = queue_recv(q, timeout);
     if (msg)
     {

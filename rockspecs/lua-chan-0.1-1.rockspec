@@ -1,11 +1,11 @@
 package = "lua-chan"
 version = "0.1-1"
 source = {
-    url = "git://github.com/easeway/lua-chan.git"
+    url = "https://github.com/lqefn/lua-chan.git"
 }
 description = {
     summary = "Simple and fast message queue for Lua",
-    homepage = "http://github.com/easeway/lua-chan",
+    homepage = "https://github.com/lqefn/lua-chan",
     license = "MIT",
 }
 dependencies = {
